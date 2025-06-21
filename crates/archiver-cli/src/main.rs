@@ -50,7 +50,6 @@ enum Commands {
         #[arg(long, short, conflicts_with = "name")]
         all: bool,
     },
-    // --- NUEVO COMANDO ---
     /// Delete one or all projects permanently from the archive.
     #[command(visible_alias = "d")]
     Delete {

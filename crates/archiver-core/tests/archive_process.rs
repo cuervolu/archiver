@@ -70,7 +70,7 @@ fn it_restores_an_archived_project() {
 fn it_ignores_excluded_projects() {
     setup_tracing();
     let (_temp_dir, mut settings) = setup_test_env();
-    
+
     let excluded_project_name = "old_project";
     settings.exclude.push(excluded_project_name.to_string());
 
@@ -84,7 +84,7 @@ fn it_ignores_excluded_projects() {
         "Excluded project should not have been moved."
     );
     assert!(!settings.archive_dir.join(excluded_project_name).exists());
-    
+
     let log_content = archiver.get_archive_records().unwrap();
     assert!(
         log_content.is_empty(),

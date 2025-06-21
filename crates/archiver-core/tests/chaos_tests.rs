@@ -18,7 +18,7 @@ fn core_c_02_it_fails_gracefully_with_corrupt_config() {
         .add_source(config::File::from(config_path))
         .build()
         .and_then(|c| c.try_deserialize::<Settings>());
-    
+
     assert!(result.is_err(), "Expected deserialization to fail");
     assert!(
         matches!(result.err().unwrap(), config::ConfigError::Type { .. }),
@@ -37,9 +37,9 @@ fn core_fs_02_it_fails_gracefully_with_read_only_archive_dir() {
     let mut readonly_perms = original_perms.clone();
     readonly_perms.set_readonly(true);
     fs::set_permissions(&settings.archive_dir, readonly_perms).unwrap();
-    
+
     let result = archiver.run_archive_process(false);
-    
+
     assert!(result.is_err(), "Expected archiving to fail due to permissions");
     let error = result.err().unwrap();
     assert!(matches!(error, Error::Io(_)), "Expected an I/O error");
@@ -59,10 +59,10 @@ fn core_l_01_it_fails_gracefully_with_corrupt_log_file() {
         .unwrap();
 
     let archiver = Archiver::new(settings);
-    
+
     // This action will try to read the corrupt log before appending to it.
     let result = archiver.run_archive_process(false);
-    
+
     assert!(result.is_err(), "Expected archiving to fail due to corrupt log");
     let error = result.err().unwrap();
     assert!(matches!(error, Error::Json(_)), "Expected a JSON deserialization error");
