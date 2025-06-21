@@ -1,4 +1,5 @@
 # --- Aliases and Settings ---
+
 # For commands like `just r my-project`
 alias r := restore
 alias ra := restore-all
@@ -17,10 +18,10 @@ default:
 test: test-core test-cli
     @echo "✅ All tests passed!"
 
-# Run the tests in the core package
+# Run all tests in the core package
 test-core:
     @echo "🧪 Running core tests..."
-    @cargo test --package archiver-core --test archive_process -- --nocapture
+    @cargo test --package archiver-core -- --nocapture
 
 # Run the CLI tests
 test-cli:

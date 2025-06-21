@@ -5,6 +5,7 @@ use console::style;
 use dialoguer::{Confirm, Input};
 use std::fs;
 use tracing::level_filters::LevelFilter;
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -78,7 +79,7 @@ enum Commands {
 #[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing().context("Failed to initialize logging")?;
+    let _guard = init_tracing(cli.verbose, cli.color).context("Failed to initialize logging")?;
 
     match cli.command {
         Some(command) => handle_command(command),
@@ -161,28 +162,38 @@ fn handle_config() -> Result<()> {
 }
 
 /// Initializes a dual logging system: to console and to a daily rolling file.
-fn init_tracing() -> Result<()> {
+fn init_tracing(verbosity: u8, color: ColorChoice) -> Result<WorkerGuard> {
     let log_dir = Settings::log_path()?;
-    fs::create_dir_all(&log_dir)?; 
-    
+    fs::create_dir_all(&log_dir)?;
+
+    // Configuración del logger de fichero
     let file_appender = tracing_appender::rolling::daily(log_dir, "archive.log");
-    let (non_blocking_appender, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
     let file_layer = fmt::layer()
         .with_writer(non_blocking_appender)
-        .with_ansi(false) 
-        .with_filter(LevelFilter::DEBUG); 
-    
+        .with_ansi(false)
+        .with_filter(LevelFilter::DEBUG); // Siempre guardar desde DEBUG en el fichero
+
+    // Configuración del logger de consola
+    let console_level = match verbosity {
+        0 => LevelFilter::INFO,
+        1 => LevelFilter::DEBUG,
+        _ => LevelFilter::TRACE,
+    };
     let console_layer = fmt::layer()
         .with_writer(std::io::stdout)
-        .with_filter(LevelFilter::INFO); 
+        .with_ansi(color != ColorChoice::Never)
+        .with_filter(console_level);
 
     tracing_subscriber::registry()
         .with(file_layer)
         .with(console_layer)
         .init();
 
-    Ok(())
+    // Devolvemos el guardián para que viva en el scope de main.
+    Ok(guard)
 }
+
 
 fn handle_run(archiver: &Archiver, dry_run: bool) -> Result<()> {
     let plan = archiver
