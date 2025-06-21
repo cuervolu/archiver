@@ -5,6 +5,9 @@ use console::style;
 use dialoguer::{Confirm, Input};
 use std::fs;
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{fmt, Layer};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// A CLI tool to automatically archive inactive git repositories.
 #[derive(Parser, Debug)]
@@ -75,7 +78,7 @@ enum Commands {
 #[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing(cli.verbose, cli.color);
+    init_tracing().context("Failed to initialize logging")?;
 
     match cli.command {
         Some(command) => handle_command(command),
@@ -157,17 +160,28 @@ fn handle_config() -> Result<()> {
     Ok(())
 }
 
-fn init_tracing(verbosity: u8, color: ColorChoice) {
-    let level = match verbosity {
-        0 => LevelFilter::INFO,
-        1 => LevelFilter::DEBUG,
-        _ => LevelFilter::TRACE,
-    };
+/// Initializes a dual logging system: to console and to a daily rolling file.
+fn init_tracing() -> Result<()> {
+    let log_dir = Settings::log_path()?;
+    fs::create_dir_all(&log_dir)?; 
+    
+    let file_appender = tracing_appender::rolling::daily(log_dir, "archive.log");
+    let (non_blocking_appender, _guard) = tracing_appender::non_blocking(file_appender);
+    let file_layer = fmt::layer()
+        .with_writer(non_blocking_appender)
+        .with_ansi(false) 
+        .with_filter(LevelFilter::DEBUG); 
+    
+    let console_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_filter(LevelFilter::INFO); 
 
-    tracing_subscriber::fmt()
-        .with_max_level(level)
-        .with_ansi(color != ColorChoice::Never) // Enable/disable color
+    tracing_subscriber::registry()
+        .with(file_layer)
+        .with(console_layer)
         .init();
+
+    Ok(())
 }
 
 fn handle_run(archiver: &Archiver, dry_run: bool) -> Result<()> {

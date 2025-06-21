@@ -72,7 +72,7 @@ restore-all:
     @cargo run --package archiver-cli -- restore --all
 
 # Scans and archives inactive projects
-# Add the --dry-run flag with: `just run -- --dry-run`.
+# Add the --dry-run flag with: `just run --dry-run`.
 run *ARGS:
     @cargo run --package archiver-cli -- run {{ARGS}}
 

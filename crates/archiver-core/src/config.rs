@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use directories::{ProjectDirs, UserDirs};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -36,6 +37,8 @@ pub struct Settings {
 }
 
 impl Default for Settings {
+    // The defaults are set in `Settings::new()` in order to handle errors.
+    // This `default()` is mainly for `serde`. The default command is executed with `just`.
     fn default() -> Self {
         Self {
             projects_dir: PathBuf::new(),
@@ -50,27 +53,47 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn config_path() -> Result<PathBuf> {
-        let home_dir = std::env::var("HOME").map_err(|_| Error::HomeDirNotFound)?;
-        Ok(PathBuf::from(format!(
-            "{}/.config/archiver/settings.toml",
-            home_dir
-        )))
-    }
     
+    const CONFIG_FILE_NAME: &'static str = "settings.toml";
+    
+    const APP_NAME: &'static str = "archiver";
+    const APP_AUTHOR: &'static str = "cuervolu";
+    const APP_QUALIFIER: &'static str = "dev";
+    const APP_ENV: &'static str = "ARCHIVER";
+    
+    
+    /// Returns the standard, platform-specific path for the configuration file.
+    pub fn config_path() -> Result<PathBuf> {
+        ProjectDirs::from(Self::APP_QUALIFIER, Self::APP_AUTHOR, Self::APP_NAME)
+            .map(|proj_dirs| proj_dirs.config_dir().join(Self::CONFIG_FILE_NAME))
+            .ok_or(Error::HomeDirNotFound) 
+    }
+
+    /// Returns the standard, platform-specific path for the log directory.
+    pub fn log_path() -> Result<PathBuf> {
+        ProjectDirs::from(Self::APP_QUALIFIER, Self::APP_AUTHOR, Self::APP_NAME)
+            .and_then(|proj_dirs| proj_dirs.state_dir().map(|p| p.to_path_buf()))
+            .ok_or(Error::HomeDirNotFound)
+    }
+
+    /// Loads settings from the config file, applying defaults for missing values.
     pub fn new() -> Result<Self> {
-        let home_dir = std::env::var("HOME").map_err(|_| Error::HomeDirNotFound)?;
+        let config_path = Self::config_path()?;
+        let config_file_path_str = config_path.to_str().unwrap_or_default();
+
+        let user_dirs = UserDirs::new().ok_or(Error::HomeDirNotFound)?;
+        let home_dir = user_dirs.home_dir();
+        let projects_default = user_dirs.document_dir().unwrap_or(home_dir).join("projects");
+        let archive_default = home_dir.join(".archive");
 
         let config_builder = config::Config::builder()
-            .add_source(
-                config::File::with_name(&format!("{}/.config/archiver/settings", home_dir))
-                    .required(false),
-            )
-            .add_source(config::Environment::with_prefix("ARCHIVER"))
-            .set_default("projects_dir", format!("{}/Proyectos", home_dir))?
-            .set_default("archive_dir", format!("{}/.archive", home_dir))?
+            .add_source(config::File::with_name(config_file_path_str).required(false))
+            .add_source(config::Environment::with_prefix(Self::APP_ENV).separator("__"))
+            .set_default("projects_dir", projects_default.to_str())?
+            .set_default("archive_dir", archive_default.to_str())?
             .set_default("inactivity_days", 30)?
             .build()?;
+
         config_builder.try_deserialize().map_err(Error::Config)
     }
 }
