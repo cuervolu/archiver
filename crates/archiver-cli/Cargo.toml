@@ -1,0 +1,24 @@
+[package]
+name = "archiver-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "archiver"
+path = "src/main.rs"
+
+[dependencies]
+archiver-core = { path = "../archiver-core" }
+clap = { workspace = true }
+notify-rust = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+dialoguer = "0.11.0"
+console = "0.15.11"
+toml = "0.8.23"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
