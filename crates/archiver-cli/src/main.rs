@@ -1,9 +1,9 @@
-use std::fs;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use archiver_core::{ActionPlan, Archiver, Settings};
 use clap::{ArgAction, ColorChoice, Parser, Subcommand};
 use console::style;
 use dialoguer::{Confirm, Input};
+use std::fs;
 use tracing::level_filters::LevelFilter;
 
 /// A CLI tool to automatically archive inactive git repositories.
@@ -19,8 +19,9 @@ struct Cli {
     #[arg(long, value_name = "WHEN", global = true, default_value_t = ColorChoice::Auto)]
     color: ColorChoice,
 
+    /// If no subcommand is provided, the TUI will be launched.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -29,62 +30,93 @@ enum Commands {
     Init,
     /// Updates the configuration interactively.
     Config,
-    /// Archive inactive projects based on configuration.
+    /// Scans for inactive projects and archives them.
     #[command(visible_alias = "a")]
-    Archive {
+    Run {
         /// Perform a dry run without moving any files.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Restore an archived project.
+    /// Restore one or all archived projects.
     #[command(visible_alias = "r")]
     Restore {
         /// The name of the project to restore.
-        #[arg(required = true)]
-        name: String,
+        name: Option<String>,
+        /// Restore all projects from the archive.
+        #[arg(long, short, conflicts_with = "name")]
+        all: bool,
+    },
+    // --- NUEVO COMANDO ---
+    /// Delete one or all projects permanently from the archive.
+    #[command(visible_alias = "d")]
+    Delete {
+        /// The name of the project to delete.
+        name: Option<String>,
+        /// Delete ALL projects from the archive. This is irreversible.
+        #[arg(long, short, conflicts_with = "name")]
+        all: bool,
+    },
+    /// Add or remove a project from the exclusion list.
+    #[command(visible_alias = "e")]
+    Exclude {
+        /// The name of the project to add or remove.
+        project_name: String,
+        /// Remove the project from the exclusion list.
+        #[arg(long, short)]
+        remove: bool,
     },
     /// List all currently archived projects.
     #[command(visible_alias = "l")]
     List,
     /// Show the configuration paths being used.
     Paths,
-
-    /// Add or remove a project from the exclusion list.
-    #[command(visible_alias = "e")]
-    Exclude {
-        /// The name of the project to add or remove.
-        project_name: String,
-
-        /// Remove the project from the exclusion list.
-        #[arg(long, short)]
-        remove: bool,
-    },
 }
 
-
+#[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose, cli.color);
 
-    match &cli.command {
+    match cli.command {
+        Some(command) => handle_command(command),
+        None => {
+            println!("TUI mode is not yet implemented. Use a subcommand like 'run' or 'list'.");
+            println!("For help, run 'archive --help'.");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn main() -> Result<()> {
+    println!("Error: This application is currently only supported on Linux.");
+    std::process::exit(1);
+}
+
+fn handle_command(command: Commands) -> Result<()> {
+    // Los comandos que no necesitan un `Archiver` se manejan primero.
+    match command {
         Commands::Init => return handle_init(),
         Commands::Config => return handle_config(),
-        Commands::Exclude { project_name, remove } => return handle_exclude(project_name, *remove),
+        Commands::Exclude {
+            project_name,
+            remove,
+        } => return handle_exclude(&project_name, remove),
         _ => {}
     }
-    
+
     let settings =
-        Settings::new().context("Failed to load settings. Try running 'archiver init'")?;
+        Settings::new().context("Failed to load settings. Try running 'archive init'")?;
     let archiver = Archiver::new(settings);
 
-    match cli.command {
-        Commands::Archive { dry_run } => handle_archive(&archiver, dry_run)?,
-        Commands::Restore { name } => handle_restore(&archiver, &name)?,
+    match command {
+        Commands::Run { dry_run } => handle_run(&archiver, dry_run)?,
+        Commands::Restore { name, all } => handle_restore(&archiver, name, all)?,
+        Commands::Delete { name, all } => handle_delete(&archiver, name, all)?,
         Commands::List => handle_list(&archiver)?,
         Commands::Paths => handle_paths(archiver.settings())?,
         _ => unreachable!(),
     }
-
     Ok(())
 }
 
@@ -125,7 +157,6 @@ fn handle_config() -> Result<()> {
     Ok(())
 }
 
-
 fn init_tracing(verbosity: u8, color: ColorChoice) {
     let level = match verbosity {
         0 => LevelFilter::INFO,
@@ -139,12 +170,15 @@ fn init_tracing(verbosity: u8, color: ColorChoice) {
         .init();
 }
 
-fn handle_archive(archiver: &Archiver, dry_run: bool) -> Result<()> {
+fn handle_run(archiver: &Archiver, dry_run: bool) -> Result<()> {
     let plan = archiver
         .run_archive_process(dry_run)
         .context("The archiving process failed")?;
 
-    let inactive_projects: Vec<_> = plan.into_iter().filter(|p| *p != ActionPlan::Nothing).collect();
+    let inactive_projects: Vec<_> = plan
+        .into_iter()
+        .filter(|p| *p != ActionPlan::Nothing)
+        .collect();
 
     if inactive_projects.is_empty() {
         println!("No projects needed archiving.");
@@ -173,11 +207,89 @@ fn handle_archive(archiver: &Archiver, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_restore(archiver: &Archiver, name: &str) -> Result<()> {
-    archiver
-        .restore_project(name)
-        .with_context(|| format!("Failed to restore project '{}'", name))?;
-    println!("Project '{}' restored successfully.", name);
+fn handle_delete(archiver: &Archiver, name: Option<String>, all: bool) -> Result<()> {
+    println!(
+        "{}",
+        style("Warning: This operation is permanent and cannot be undone.")
+            .red()
+            .bold()
+    );
+    if all {
+        let records_to_delete = archiver.get_archive_records()?.len();
+        if records_to_delete == 0 {
+            println!("Archive is already empty.");
+            return Ok(());
+        }
+        if !Confirm::new()
+            .with_prompt(format!(
+                "Are you sure you want to permanently delete ALL {} projects?",
+                records_to_delete
+            ))
+            .default(false)
+            .interact()?
+        {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+        let confirmation: u64 = Input::new()
+            .with_prompt(format!(
+                "To confirm, please type the number of projects to delete ({})",
+                records_to_delete
+            ))
+            .interact_text()?;
+        if confirmation != records_to_delete as u64 {
+            return Err(anyhow!("Incorrect number entered. Deletion cancelled."));
+        }
+        let count = archiver.delete_all()?;
+        println!("Successfully deleted {} projects.", style(count).red());
+    } else if let Some(project_name) = name {
+        if !Confirm::new()
+            .with_prompt(format!(
+                "Are you sure you want to permanently delete '{}'?",
+                project_name
+            ))
+            .default(false)
+            .interact()?
+        {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+        archiver.delete_project(&project_name)?;
+        println!(
+            "Project '{}' deleted successfully.",
+            style(project_name).cyan()
+        );
+    } else {
+        return Err(anyhow!(
+            "You must specify a project name or use the --all flag."
+        ));
+    }
+    Ok(())
+}
+
+fn handle_restore(archiver: &Archiver, name: Option<String>, all: bool) -> Result<()> {
+    if all {
+        if !Confirm::new()
+            .with_prompt("Restore all projects from the archive?")
+            .default(false)
+            .interact()?
+        {
+            println!("Operation cancelled.");
+            return Ok(());
+        }
+        let count = archiver.restore_all()?;
+        println!("Successfully restored {} projects.", style(count).green());
+    } else if let Some(project_name) = name {
+        archiver.restore_project(&project_name)?;
+        println!(
+            "Project '{}' restored successfully.",
+            style(project_name).cyan()
+        );
+    } else {
+        return Err(anyhow!(
+            "You must specify a project name or use the --all flag."
+        ));
+    }
     Ok(())
 }
 
@@ -223,24 +335,18 @@ fn interactive_config_update(existing: Option<&Settings>) -> Result<Settings> {
 
     let projects_dir: String = Input::with_theme(&theme)
         .with_prompt("Enter the path to your projects directory")
-        .default(
-            existing
-                .map_or_else(
-                    || format!("{}/projects", home_dir),
-                    |s| s.projects_dir.to_string_lossy().to_string(),
-                ),
-        )
+        .default(existing.map_or_else(
+            || format!("{}/projects", home_dir),
+            |s| s.projects_dir.to_string_lossy().to_string(),
+        ))
         .interact_text()?;
 
     let archive_dir: String = Input::with_theme(&theme)
         .with_prompt("Enter the path for the archive directory")
-        .default(
-            existing
-                .map_or_else(
-                    || format!("{}/.archive", home_dir),
-                    |s| s.archive_dir.to_string_lossy().to_string(),
-                ),
-        )
+        .default(existing.map_or_else(
+            || format!("{}/.archive", home_dir),
+            |s| s.archive_dir.to_string_lossy().to_string(),
+        ))
         .interact_text()?;
 
     let inactivity_days: u64 = Input::with_theme(&theme)
@@ -261,24 +367,34 @@ fn interactive_config_update(existing: Option<&Settings>) -> Result<Settings> {
 
 fn handle_exclude(project_name: &str, remove: bool) -> Result<()> {
     let mut settings = Settings::new().unwrap_or_default();
-
     if remove {
         if let Some(pos) = settings.exclude.iter().position(|p| p == project_name) {
             settings.exclude.remove(pos);
-            println!("Project '{}' has been removed from the exclusion list.", style(project_name).yellow());
+            println!(
+                "Project '{}' has been removed from the exclusion list.",
+                style(project_name).yellow()
+            );
         } else {
-            println!("Project '{}' was not on the exclusion list. No changes made.", style(project_name).yellow());
+            println!(
+                "Project '{}' was not on the exclusion list. No changes made.",
+                style(project_name).yellow()
+            );
             return Ok(());
         }
     } else {
         if settings.exclude.iter().any(|p| p == project_name) {
-            println!("Project '{}' is already on the exclusion list.", style(project_name).yellow());
+            println!(
+                "Project '{}' is already on the exclusion list.",
+                style(project_name).yellow()
+            );
             return Ok(());
         }
         settings.exclude.push(project_name.to_string());
-        println!("Project '{}' has been added to the exclusion list.", style(project_name).yellow());
+        println!(
+            "Project '{}' has been added to the exclusion list.",
+            style(project_name).yellow()
+        );
     }
-
     save_settings(&settings).context("Failed to save updated settings")
 }
 
@@ -294,4 +410,3 @@ fn save_settings(settings: &Settings) -> Result<()> {
         .with_context(|| format!("Could not write config to '{}'", path.display()))?;
     Ok(())
 }
-

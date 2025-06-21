@@ -1,9 +1,10 @@
 # --- Aliases and Settings ---
-
 # For commands like `just r my-project`
 alias r := restore
+alias ra := restore-all
 alias l := list
-alias a := archive
+alias a := run
+alias d := delete
 alias e := exclude
 
 # --- Development & CI Workflow ---
@@ -49,7 +50,7 @@ build-release:
 
 # --- Running the Application ---
 
-# Install the binary in the cargo PATH to be able to use `archiver` globally.
+# Install the binary in the cargo PATH to be able to use `archive` globally.
 install: build-release
     @cargo install --path crates/archiver-cli
 
@@ -61,15 +62,19 @@ init:
 config:
     @cargo run --package archiver-cli -- config
 
-# Restore an archived project
+# Restore a specific archived project
 # Example: `just restore my-project`
 restore NAME:
     @cargo run --package archiver-cli -- restore {{NAME}}
 
-# Archive inactive projects
-# Add the --dry-run flag with: `just archive -- --dry-run`.
-archive *ARGS:
-    @cargo run --package archiver-cli -- archive {{ARGS}}
+# Restore all archived projects
+restore-all:
+    @cargo run --package archiver-cli -- restore --all
+
+# Scans and archives inactive projects
+# Add the --dry-run flag with: `just run -- --dry-run`.
+run *ARGS:
+    @cargo run --package archiver-cli -- run {{ARGS}}
 
 # List all archived projects
 list:
@@ -78,4 +83,9 @@ list:
 # Add or remove a project from the exclusion list
 # Example: `just exclude my-project` or `just exclude --remove my-project`
 exclude *ARGS:
-    @cargo run --package archiver-cli  -- exclude {{ARGS}}
+    @cargo run --package archiver-cli -- exclude {{ARGS}}
+
+# Delete an archived project permanently
+# Example: `just delete my-project` or `just delete --all`
+delete *ARGS:
+    @cargo run --package archiver-cli -- delete {{ARGS}}

@@ -17,7 +17,10 @@ use walkdir::WalkDir;
 /// Represents a planned action during a dry run.
 #[derive(Debug, PartialEq)]
 pub enum ActionPlan {
-    Archive { project_name: String, path: std::path::PathBuf },
+    Archive {
+        project_name: String,
+        path: std::path::PathBuf,
+    },
     Nothing,
 }
 
@@ -48,7 +51,10 @@ impl Archiver {
             info!("No inactive projects to archive. Process finished.");
             return Ok(vec![ActionPlan::Nothing]);
         }
-        info!(count = inactive_projects.len(), "Found inactive projects to archive.");
+        info!(
+            count = inactive_projects.len(),
+            "Found inactive projects to archive."
+        );
 
         let mut plan = vec![];
         let mut new_records = vec![];
@@ -59,7 +65,8 @@ impl Archiver {
                 path: project.path.clone(),
             });
             if !dry_run {
-                let project_span = span!(Level::INFO, "archive_project", project_name = %project.name);
+                let project_span =
+                    span!(Level::INFO, "archive_project", project_name = %project.name);
                 let _enter = project_span.enter();
                 info!("Archiving project...");
                 let record = self.archive_project(project)?;
@@ -81,8 +88,15 @@ impl Archiver {
     pub fn restore_project(&self, project_name: &str) -> Result<()> {
         info!(%project_name, "Attempting to restore project.");
         let mut all_records = self.get_archive_records()?;
-        let record_idx = all_records.iter().position(|r| r.name == project_name)
-            .ok_or_else(|| Error::Custom(format!("Project '{}' not found in archive log.", project_name)))?;
+        let record_idx = all_records
+            .iter()
+            .position(|r| r.name == project_name)
+            .ok_or_else(|| {
+                Error::Custom(format!(
+                    "Project '{}' not found in archive log.",
+                    project_name
+                ))
+            })?;
         let record = all_records.get(record_idx).unwrap();
         debug!(from = %record.archive_path.display(), to = %record.original_path.display(), "Moving project directory.");
         if let Some(parent) = record.original_path.parent() {
@@ -95,13 +109,93 @@ impl Archiver {
         Ok(())
     }
 
+    /// Restores all projects from the archive to their original locations.
+    /// Returns the number of projects restored.
+    #[instrument(skip(self))]
+    pub fn restore_all(&self) -> Result<usize> {
+        info!("Attempting to restore all projects.");
+        let all_records = self.get_archive_records()?;
+        let count = all_records.len();
+
+        if count == 0 {
+            info!("Archive is empty. Nothing to restore.");
+            return Ok(0);
+        }
+
+        for record in &all_records {
+            let path = &record.archive_path;
+            let dest = &record.original_path;
+            debug!(from = %path.display(), to = %dest.display(), "Restoring project.");
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(path, dest)?;
+        }
+
+        // Clear the log file by writing an empty array
+        self.write_archive_log(&[])?;
+        info!("Successfully restored {} projects.", count);
+        Ok(count)
+    }
+
+    /// Deletes a single project permanently from the archive. This operation is irreversible!
+    #[instrument(skip(self))]
+    pub fn delete_project(&self, project_name: &str) -> Result<()> {
+        info!(%project_name, "Attempting to delete project permanently.");
+        let mut all_records = self.get_archive_records()?;
+
+        let record_idx = all_records
+            .iter()
+            .position(|r| r.name == project_name)
+            .ok_or_else(|| {
+                Error::Custom(format!(
+                    "Project '{}' not found in archive log.",
+                    project_name
+                ))
+            })?;
+
+        let record = all_records.remove(record_idx);
+
+        debug!(path = %record.archive_path.display(), "Deleting project directory.");
+        fs::remove_dir_all(&record.archive_path)?;
+
+        self.write_archive_log(&all_records)?;
+        info!("Project '{}' deleted successfully.", project_name);
+        Ok(())
+    }
+
+    /// Deletes ALL projects permanently from the archive. This operation is irreversible, there is no undo!
+    /// Returns the number of projects deleted.
+    #[instrument(skip(self))]
+    pub fn delete_all(&self) -> Result<usize> {
+        info!("Attempting to delete ALL projects permanently.");
+        let all_records = self.get_archive_records()?;
+        let count = all_records.len();
+
+        if count == 0 {
+            info!("Archive is empty. Nothing to delete.");
+            return Ok(0);
+        }
+
+        debug!(path = %self.settings.archive_dir.display(), "Deleting all contents of archive directory.");
+        // We can just remove the whole directory and recreate it. It's simpler.
+        fs::remove_dir_all(&self.settings.archive_dir)?;
+        fs::create_dir_all(&self.settings.archive_dir)?;
+
+        info!("Successfully deleted {} projects.", count);
+        Ok(count)
+    }
+
     #[instrument(skip(self))]
     fn scan_projects(&self) -> Result<Vec<ScannedProject>> {
         let mut projects = Vec::new();
         let archive_dir_name = self.settings.archive_dir.file_name();
         debug!(directory = %self.settings.projects_dir.display(), "Scanning for projects.");
 
-        for entry_result in WalkDir::new(&self.settings.projects_dir).min_depth(1).max_depth(1) {
+        for entry_result in WalkDir::new(&self.settings.projects_dir)
+            .min_depth(1)
+            .max_depth(1)
+        {
             let entry = entry_result?;
             if Some(entry.file_name()) == archive_dir_name {
                 debug!(path = %entry.path().display(), "Skipping archive directory.");
@@ -109,14 +203,20 @@ impl Archiver {
             }
 
             let project_name = entry.file_name().to_string_lossy();
-            if self.settings.exclude.iter().any(|excluded| *excluded == project_name) {
+            if self
+                .settings
+                .exclude
+                .iter()
+                .any(|excluded| *excluded == project_name)
+            {
                 debug!(name = %project_name, "Skipping excluded project.");
                 continue;
             }
 
-
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
 
             match self.get_last_activity(path) {
                 Ok(last_activity) => {
@@ -212,7 +312,10 @@ impl Archiver {
     fn filter_inactive_projects(&self, projects: Vec<ScannedProject>) -> Vec<ScannedProject> {
         let now = Utc::now();
         let inactivity_period = Duration::days(self.settings.inactivity_days as i64);
-        projects.into_iter().filter(|p| now.signed_duration_since(p.last_activity) > inactivity_period).collect()
+        projects
+            .into_iter()
+            .filter(|p| now.signed_duration_since(p.last_activity) > inactivity_period)
+            .collect()
     }
 
     #[instrument(skip(self, project))]
@@ -224,12 +327,19 @@ impl Archiver {
             fs::create_dir_all(parent)?;
         }
         fs::rename(&project.path, &dest_path)?;
-        Ok(ArchivedRecord { name: project_name.clone(), original_path: project.path.clone(), archive_path: dest_path, archived_at: Utc::now() })
+        Ok(ArchivedRecord {
+            name: project_name.clone(),
+            original_path: project.path.clone(),
+            archive_path: dest_path,
+            archived_at: Utc::now(),
+        })
     }
 
     #[instrument(skip(self, new_records))]
     fn append_to_archive_log(&self, new_records: &[ArchivedRecord]) -> Result<()> {
-        if new_records.is_empty() { return Ok(()); }
+        if new_records.is_empty() {
+            return Ok(());
+        }
         info!(count = new_records.len(), "Appending to archive log file.");
         let mut all_records = self.get_archive_records()?;
         all_records.extend_from_slice(new_records);
