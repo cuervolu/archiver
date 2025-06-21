@@ -48,18 +48,29 @@ enum Commands {
     List,
     /// Show the configuration paths being used.
     Paths,
+
+    /// Add or remove a project from the exclusion list.
+    #[command(visible_alias = "e")]
+    Exclude {
+        /// The name of the project to add or remove.
+        project_name: String,
+
+        /// Remove the project from the exclusion list.
+        #[arg(long, short)]
+        remove: bool,
+    },
 }
 
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose, cli.color);
-    
-    if let Commands::Init = cli.command {
-        return handle_init();
-    }
-    if let Commands::Config = cli.command {
-        return handle_config();
+
+    match &cli.command {
+        Commands::Init => return handle_init(),
+        Commands::Config => return handle_config(),
+        Commands::Exclude { project_name, remove } => return handle_exclude(project_name, *remove),
+        _ => {}
     }
     
     let settings =
@@ -244,7 +255,31 @@ fn interactive_config_update(existing: Option<&Settings>) -> Result<Settings> {
         cleanup_rules: existing.map_or_else(Vec::new, |s| s.cleanup_rules.clone()),
         enable_auto_delete: existing.map_or(false, |s| s.enable_auto_delete),
         days_before_delete: existing.map_or(365, |s| s.days_before_delete),
+        exclude: existing.map_or_else(Vec::new, |s| s.exclude.clone()),
     })
+}
+
+fn handle_exclude(project_name: &str, remove: bool) -> Result<()> {
+    let mut settings = Settings::new().unwrap_or_default();
+
+    if remove {
+        if let Some(pos) = settings.exclude.iter().position(|p| p == project_name) {
+            settings.exclude.remove(pos);
+            println!("Project '{}' has been removed from the exclusion list.", style(project_name).yellow());
+        } else {
+            println!("Project '{}' was not on the exclusion list. No changes made.", style(project_name).yellow());
+            return Ok(());
+        }
+    } else {
+        if settings.exclude.iter().any(|p| p == project_name) {
+            println!("Project '{}' is already on the exclusion list.", style(project_name).yellow());
+            return Ok(());
+        }
+        settings.exclude.push(project_name.to_string());
+        println!("Project '{}' has been added to the exclusion list.", style(project_name).yellow());
+    }
+
+    save_settings(&settings).context("Failed to save updated settings")
 }
 
 /// Helper to serialize and save settings to the config file.

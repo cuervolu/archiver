@@ -108,6 +108,13 @@ impl Archiver {
                 continue;
             }
 
+            let project_name = entry.file_name().to_string_lossy();
+            if self.settings.exclude.iter().any(|excluded| *excluded == project_name) {
+                debug!(name = %project_name, "Skipping excluded project.");
+                continue;
+            }
+
+
             let path = entry.path();
             if !path.is_dir() { continue; }
 

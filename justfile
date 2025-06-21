@@ -4,6 +4,7 @@
 alias r := restore
 alias l := list
 alias a := archive
+alias e := exclude
 
 # --- Development & CI Workflow ---
 
@@ -73,3 +74,8 @@ archive *ARGS:
 # List all archived projects
 list:
     @cargo run --package archiver-cli -- list
+
+# Add or remove a project from the exclusion list
+# Example: `just exclude my-project` or `just exclude --remove my-project`
+exclude *ARGS:
+    @cargo run --package archiver-cli  -- exclude {{ARGS}}

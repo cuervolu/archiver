@@ -30,6 +30,9 @@ pub struct Settings {
 
     /// Number of days before an archived project is deleted.
     pub days_before_delete: u64,
+
+    /// A list of project names to exclude from archiving.
+    pub exclude: Vec<String>,
 }
 
 impl Default for Settings {
@@ -41,6 +44,7 @@ impl Default for Settings {
             cleanup_rules: vec![],
             enable_auto_delete: false,
             days_before_delete: 365,
+            exclude: vec![],
         }
     }
 }
