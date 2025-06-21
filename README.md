@@ -17,13 +17,13 @@ Currently, **Archive** is developed and tested primarily for **Linux**. Support 
 2.  **Preview What Will Be Archived**
     Get a safe preview of which projects are considered inactive without moving any files.
     ```bash
-    archive archive --dry-run
+    archive run --dry-run
     ```
 
 3.  **Run the Archiving Process**
     Move all inactive projects to your archive directory.
     ```bash
-    archive archive
+    archive run
     ```
 
 4.  **List Archived Projects**
